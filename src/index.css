@@ -1,0 +1,88 @@
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+@layer base {
+  html {
+    @apply scroll-smooth;
+  }
+  body {
+    @apply bg-gray-50 text-gray-900 antialiased;
+    font-feature-settings: "cv02", "cv03", "cv04", "cv11";
+  }
+}
+
+@layer components {
+  .btn {
+    @apply inline-flex items-center justify-center px-4 py-2.5 rounded-lg font-medium transition-all duration-200 focus:outline-none focus:ring-2 focus:ring-offset-2 disabled:opacity-50 disabled:cursor-not-allowed;
+  }
+  .btn-primary {
+    @apply btn bg-primary-600 text-white hover:bg-primary-700 focus:ring-primary-500;
+  }
+  .btn-secondary {
+    @apply btn bg-white text-gray-700 border border-gray-300 hover:bg-gray-50 focus:ring-gray-500;
+  }
+  .btn-outline {
+    @apply btn border-2 border-primary-600 text-primary-600 hover:bg-primary-50 focus:ring-primary-500;
+  }
+  .btn-danger {
+    @apply btn bg-red-600 text-white hover:bg-red-700 focus:ring-red-500;
+  }
+  .btn-ghost {
+    @apply btn text-gray-600 hover:bg-gray-100 hover:text-gray-900 focus:ring-gray-500;
+  }
+  
+  .input {
+    @apply w-full px-4 py-2.5 rounded-lg border border-gray-300 bg-white text-gray-900 placeholder-gray-400 transition-all duration-200 focus:outline-none focus:ring-2 focus:ring-primary-500 focus:border-transparent;
+  }
+  .input-error {
+    @apply border-red-500 focus:ring-red-500;
+  }
+  .label {
+    @apply block text-sm font-medium text-gray-700 mb-1.5;
+  }
+  .card {
+    @apply bg-white rounded-xl shadow-sm border border-gray-100 overflow-hidden transition-shadow duration-200 hover:shadow-md;
+  }
+  .card-header {
+    @apply px-6 py-4 border-b border-gray-100;
+  }
+  .card-body {
+    @apply p-6;
+  }
+  .card-footer {
+    @apply px-6 py-4 border-t border-gray-100 bg-gray-50;
+  }
+  
+  .badge {
+    @apply inline-flex items-center px-2.5 py-0.5 rounded-full text-xs font-medium;
+  }
+  .badge-success {
+    @apply badge bg-green-100 text-green-800;
+  }
+  .badge-warning {
+    @apply badge bg-yellow-100 text-yellow-800;
+  }
+  .badge-danger {
+    @apply badge bg-red-100 text-red-800;
+  }
+  .badge-info {
+    @apply badge bg-blue-100 text-blue-800;
+  }
+  .badge-gray {
+    @apply badge bg-gray-100 text-gray-800;
+  }
+}
+
+@layer utilities {
+  .text-balance {
+    text-wrap: balance;
+  }
+  .scrollbar-hide {
+    -ms-overflow-style: none;
+    scrollbar-width: none;
+  }
+  .scrollbar-hide::-webkit-scrollbar {
+    display: none;
+  }
+}

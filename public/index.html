@@ -1,0 +1,771 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Digital Kisan Mitra - Smart Farming Assistant</title>
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700&display=swap" rel="stylesheet">
+  <script src="https://cdn.tailwindcss.com"></script>
+  <style>
+    body { font-family: 'Inter', system-ui, sans-serif; }
+    .spinner { border: 4px solid #f3f3f3; border-top: 4px solid #16a34a; border-radius: 50%; width: 40px; height: 40px; animation: spin 1s linear infinite; }
+    @keyframes spin { 0% { transform: rotate(0deg); } 100% { transform: rotate(360deg); } }
+    .spinner-small { border: 3px solid #f3f3f3; border-top: 3px solid #16a34a; border-radius: 50%; width: 20px; height: 20px; animation: spin 1s linear infinite; display: inline-block; }
+  </style>
+</head>
+<body class="bg-gray-50">
+  <div id="root">
+    <div style="display:flex;align-items:center;justify-content:center;height:100vh;flex-direction:column;">
+      <div class="spinner"></div>
+      <p style="margin-top:16px;color:#666;">Loading Digital Kisan Mitra...</p>
+    </div>
+  </div>
+  <script src="react.min.js"></script>
+  <script src="react-dom.min.js"></script>
+  <script src="babel.min.js"></script>
+  <script type="text/babel" data-presets="react">
+    const { useState, useEffect, useContext, createContext, useRef } = React;
+    const API_URL = 'http://localhost:5000/api';
+
+    // ============ LOCAL DATA SERVICE (No Backend Needed!) ============
+    const delay = (ms) => new Promise(resolve => setTimeout(resolve, ms));
+    
+    const db = {
+      getUsers: () => JSON.parse(localStorage.getItem('kisan_users') || '[]'),
+      saveUsers: (users) => localStorage.setItem('kisan_users', JSON.stringify(users)),
+      getCrops: () => JSON.parse(localStorage.getItem('kisan_crops') || '[]'),
+      saveCrops: (crops) => localStorage.setItem('kisan_crops', JSON.stringify(crops))
+    };
+
+    const api = {
+      post: async (url, data) => {
+        await delay(300);
+        if (url === '/auth/register') {
+          const users = db.getUsers();
+          if (users.find(u => u.mobileNumber === data.mobileNumber)) {
+            return { success: false, message: 'Mobile number already registered' };
+          }
+          const newUser = { _id: Date.now().toString(), ...data, password: btoa(data.password), createdAt: new Date().toISOString() };
+          users.push(newUser);
+          db.saveUsers(users);
+          const { password, ...userWithoutPassword } = newUser;
+          return { success: true, data: { user: userWithoutPassword, token: 'local-token-' + newUser._id } };
+        }
+        if (url === '/auth/login') {
+          const users = db.getUsers();
+          const user = users.find(u => u.mobileNumber === data.mobileNumber);
+          if (!user || atob(user.password) !== data.password) {
+            return { success: false, message: 'Invalid credentials' };
+          }
+          const { password, ...userWithoutPassword } = user;
+          return { success: true, data: { user: userWithoutPassword, token: 'local-token-' + user._id } };
+        }
+        if (url === '/crops') {
+          const user = JSON.parse(localStorage.getItem('user') || 'null');
+          if (!user) return { success: false, message: 'Not logged in' };
+          const newCrop = { _id: Date.now().toString(), farmerId: user._id, ...data, createdAt: new Date().toISOString(), updatedAt: new Date().toISOString() };
+          const crops = db.getCrops();
+          crops.push(newCrop);
+          db.saveCrops(crops);
+          return { success: true, data: newCrop };
+        }
+        return { success: false, message: 'Endpoint not found' };
+      },
+      get: async (url) => {
+        await delay(200);
+        if (url.startsWith('/farmer/profile')) {
+          const user = JSON.parse(localStorage.getItem('user') || 'null');
+          if (!user) return { success: false, message: 'Not logged in' };
+          return { success: true, data: user };
+        }
+        if (url === '/crops') {
+          const user = JSON.parse(localStorage.getItem('user') || 'null');
+          if (!user) return { success: false, message: 'Not logged in' };
+          const crops = db.getCrops().filter(c => c.farmerId === user._id);
+          return { success: true, data: crops };
+        }
+        if (url.startsWith('/analytics/dashboard')) {
+          const user = JSON.parse(localStorage.getItem('user') || 'null');
+          if (!user) return { success: false, message: 'Not logged in' };
+          const crops = db.getCrops().filter(c => c.farmerId === user._id);
+          return { success: true, data: { totalCrops: crops.length, activeCrops: crops.filter(c => ['planting', 'growing'].includes(c.status)).length } };
+        }
+        if (url.startsWith('/weather/current')) {
+          return { success: true, data: { temperature: 28, humidity: 65, windSpeed: 12, condition: 'Partly Cloudy', precipitation: 2, location: 'Pune, Maharashtra', timestamp: new Date().toISOString() } };
+        }
+        if (url.startsWith('/weather/forecast')) {
+          const conditions = ['Sunny', 'Partly Cloudy', 'Cloudy', 'Light Rain'];
+          const forecast = [];
+          for (let i = 0; i < 7; i++) {
+            const date = new Date();
+            date.setDate(date.getDate() + i);
+            forecast.push({ date: date.toISOString(), condition: conditions[Math.floor(Math.random() * conditions.length)], minTemp: 20 + Math.floor(Math.random() * 5), maxTemp: 28 + Math.floor(Math.random() * 8), humidity: 55 + Math.floor(Math.random() * 30), windSpeed: 8 + Math.floor(Math.random() * 15), precipitationChance: Math.floor(Math.random() * 100) });
+          }
+          return { success: true, data: forecast };
+        }
+        if (url.startsWith('/mandi/prices')) {
+          const params = new URLSearchParams(url.split('?')[1] || '');
+          const cropFilter = params.get('crop');
+          const marketFilter = params.get('market');
+          const crops = ['Rice', 'Wheat', 'Cotton', 'Sugarcane', 'Onion', 'Tomato', 'Potato', 'Soybean'];
+          const markets = ['Mumbai', 'Delhi', 'Pune', 'Nashik', 'Bangalore', 'Chennai', 'Kolkata'];
+          const units = { Rice: 'quintal', Wheat: 'quintal', Cotton: 'quintal', Sugarcane: 'quintal', Onion: 'quintal', Tomato: 'quintal', Potato: 'quintal', Soybean: 'quintal' };
+          const basePrices = { Rice: 2200, Wheat: 2400, Cotton: 6500, Sugarcane: 350, Onion: 1800, Tomato: 1200, Potato: 900, Soybean: 4200 };
+          const prices = [];
+          const cropList = cropFilter ? [cropFilter] : crops;
+          const marketList = marketFilter ? [marketFilter] : markets;
+          cropList.forEach(c => {
+            marketList.forEach(m => {
+              const basePrice = basePrices[c] || 2000;
+              const variation = (Math.random() - 0.5) * 0.2;
+              const price = basePrice * (1 + variation);
+              const change = (Math.random() - 0.5) * 100;
+              prices.push({ id: `${c}-${m}`, cropId: c.toLowerCase(), cropName: c, marketId: m.toLowerCase(), marketName: `${m} Mandi`, price: Math.round(price * 100) / 100, unit: units[c] || 'quintal', change: Math.round(change * 100) / 100, changePercent: Math.round((change / basePrice) * 10000) / 100, updatedAt: new Date().toISOString() });
+            });
+          });
+          return { success: true, data: prices };
+        }
+        return { success: false, message: 'Endpoint not found' };
+      },
+      put: async (url, data) => {
+        await delay(300);
+        if (url === '/farmer/profile') {
+          const user = JSON.parse(localStorage.getItem('user') || 'null');
+          if (!user) return { success: false, message: 'Not logged in' };
+          const updated = { ...user, ...data };
+          localStorage.setItem('user', JSON.stringify(updated));
+          const users = db.getUsers();
+          const idx = users.findIndex(u => u._id === user._id);
+          if (idx >= 0) { users[idx] = { ...users[idx], ...data }; db.saveUsers(users); }
+          return { success: true, data: updated };
+        }
+        if (url === '/farmer/change-password') {
+          const user = JSON.parse(localStorage.getItem('user') || 'null');
+          if (!user) return { success: false, message: 'Not logged in' };
+          const users = db.getUsers();
+          const idx = users.findIndex(u => u._id === user._id);
+          if (idx < 0) return { success: false, message: 'User not found' };
+          if (atob(users[idx].password) !== data.currentPassword) return { success: false, message: 'Current password is incorrect' };
+          users[idx].password = btoa(data.newPassword);
+          db.saveUsers(users);
+          return { success: true, message: 'Password changed successfully' };
+        }
+        if (url.startsWith('/crops/')) {
+          const id = url.split('/')[2];
+          const crops = db.getCrops();
+          const idx = crops.findIndex(c => c._id === id);
+          if (idx < 0) return { success: false, message: 'Crop not found' };
+          crops[idx] = { ...crops[idx], ...data, updatedAt: new Date().toISOString() };
+          db.saveCrops(crops);
+          return { success: true, data: crops[idx] };
+        }
+        return { success: false, message: 'Endpoint not found' };
+      },
+      del: async (url) => {
+        await delay(200);
+        if (url.startsWith('/crops/')) {
+          const id = url.split('/')[2];
+          const crops = db.getCrops().filter(c => c._id !== id);
+          db.saveCrops(crops);
+          return { success: true, message: 'Crop deleted' };
+        }
+        return { success: false, message: 'Endpoint not found' };
+      }
+    };
+
+    // ============ I18N ============
+    const translations = {
+      en: { appName:'Digital Kisan Mitra', login:'Login', register:'Register', logout:'Logout', profile:'Profile', dashboard:'Dashboard', crops:'My Crops', weather:'Weather', mandi:'Mandi Prices', welcome:'Welcome', fullName:'Full Name', mobileNumber:'Mobile Number', email:'Email', password:'Password', confirmPassword:'Confirm Password', address:'Address', city:'City', state:'State', pincode:'PIN Code', farmSize:'Farm Size (acres)', cropsGrown:'Crops Grown', submit:'Submit', cancel:'Cancel', save:'Save', edit:'Edit', delete:'Delete', add:'Add', search:'Search', loading:'Loading...', cropManagement:'Crop Management', addCrop:'Add New Crop', cropName:'Crop Name', variety:'Variety', area:'Area (acres)', plantingDate:'Planting Date', expectedHarvest:'Expected Harvest', status:'Status', planting:'Planting', growing:'Growing', readyForHarvest:'Ready for Harvest', harvested:'Harvested', mandiPrices:'Mandi Prices', currentWeather:'Current Weather', temperature:'Temperature', humidity:'Humidity', windSpeed:'Wind Speed', forecast:'Forecast', selectCrop:'Select Crop', selectMarket:'Select Market', allCrops:'All Crops', allMarkets:'All Markets', price:'Price', unit:'Unit', change:'Change', welcomeBack:'Welcome back, {name}!', myCrops:'My Crops', noCrops:"You haven't added any crops yet", addFirstCrop:'Add Your First Crop', noData:'No data available', saveChanges:'Save Changes', selectLanguage:'Language', english:'English', hindi:'Hindi', marathi:'Marathi', currentPassword:'Current Password', newPassword:'New Password', registrationSuccess:'Registration successful!', loginSuccess:'Login successful!', passwordsDontMatch:'Passwords do not match', fillAllFields:'Please fill all required fields', enterValidMobile:'Please enter a valid 10-digit mobile number', profileUpdated:'Profile updated successfully', passwordChanged:'Password changed successfully', cropAdded:'Crop added successfully', cropUpdated:'Crop updated successfully', cropDeleted:'Crop deleted successfully', confirmDelete:'Confirm Delete', deleteCropConfirm:'Are you sure you want to delete this crop?', deleting:'Deleting...', updating:'Updating...', adding:'Adding...', saving:'Saving...', retry:'Retry', applyFilters:'Apply Filters', totalCrops:'Total Crops', activeCrops:'Active Crops', recentActivity:'Recent Activity', noRecentActivity:'No recent activity', quickActions:'Quick Actions', manageYourCrops:'Add, edit, and track your crops', weatherForecast:'Get accurate weather forecasts for your farm', checkMarketPrices:'Check latest market prices for your crops', useCurrentLocation:'Use current location', search:'Search', highLow:'High/Low', precipitationChance:'Precipitation', chartPlaceholder:'Price trend chart would be displayed here', viewPriceHistory:'View Price History', priceTrend:'Price Trend', backToLogin:'Already have an account? Login', dontHaveAccount:"Don't have an account? Register", poweredBy:'Powered by AI & Agriculture Technology', changePassword:'Change Password' },
+      hi: { appName:'डिजिटल किसान मित्र', login:'लॉग इन', register:'पंजीकरण', logout:'लॉग आउट', profile:'प्रोफाइल', dashboard:'डैशबोर्ड', crops:'मेरी फसलें', weather:'मौसम', mandi:'मंडी कीमतें', welcome:'स्वागत है', fullName:'पूरा नाम', mobileNumber:'मोबाइल नंबर', email:'ईमेल', password:'पासवर्ड', confirmPassword:'पासवर्ड की पुष्टि', address:'पता', city:'शहर', state:'राज्य', pincode:'पिन कोड', farmSize:'फार्म का आकार', cropsGrown:'उगाई जाने वाली फसलें', submit:'सबमिट', cancel:'रद्द करें', save:'सहेजें', edit:'संपादित', delete:'हटाएँ', add:'जोड़ें', search:'खोजें', loading:'लोड हो रहा है...', cropManagement:'फसल प्रबंधन', addCrop:'नई फसल जोड़ें', cropName:'फसल का नाम', variety:'किस्म', area:'क्षेत्र (एकड़)', plantingDate:'बुआई की तारीख', expectedHarvest:'उम्मीद की कटाई', status:'स्थिति', planting:'बुआई', growing:'विकास', readyForHarvest:'कटाई के लिए तैयार', harvested:'कटाई की गई', mandiPrices:'मंडी कीमतें', currentWeather:'वर्तमान मौसम', temperature:'तापमान', humidity:'आर्द्रता', windSpeed:'हवा की गति', forecast:'पूर्वानुमान', selectCrop:'फसल चुनें', selectMarket:'बाजार चुनें', allCrops:'सभी फसलें', allMarkets:'सभी बाजार', price:'कीमत', unit:'इकाई', change:'बदलाव', welcomeBack:'स्वागत है, {name}!', myCrops:'मेरी फसलें', noCrops:'आपने अभी तक कोई फसल नहीं जोड़ी है', addFirstCrop:'अपनी पहली फसल जोड़ें', noData:'कोई डेटा उपलब्ध नहीं', saveChanges:'परिवर्तन सहेजें', selectLanguage:'भाषा', english:'अंग्रेजी', hindi:'हिंदी', marathi:'मराठी', currentPassword:'वर्तमान पासवर्ड', newPassword:'नया पासवर्ड', registrationSuccess:'पंजीकरण सफल!', loginSuccess:'लॉग इन सफल!', passwordsDontMatch:'पासवर्ड मेल नहीं खाते', fillAllFields:'कृपया सभी आवश्यक फ़ील्ड भरें', enterValidMobile:'कृपया एक वैध 10-अंकीय मोबाइल नंबर दर्ज करें', profileUpdated:'प्रोफ़ाइल सफलतापूर्वक अपडेट की गई', passwordChanged:'पासवर्ड सफलतापूर्वक बदला गया', cropAdded:'फसल सफलतापूर्वक जोड़ी गई', cropUpdated:'फसल सफलतापूर्वक अपडेट की गई', cropDeleted:'फसल सफलतापूर्वक हटाई गई', confirmDelete:'हटाने की पुष्टि करें', deleteCropConfirm:'क्या आप वाकई इस फसल को हटाना चाहते हैं?', deleting:'हटा रहा है...', updating:'अपडेट हो रहा है...', adding:'जोड़ रहा है...', saving:'सहेज रहा है...', retry:'पुनः प्रयास करें', applyFilters:'फ़िल्टर लागू करें', totalCrops:'कुल फसलें', activeCrops:'सक्रिय फसलें', recentActivity:'हाल की गतिविधि', noRecentActivity:'कोई हाल की गतिविधि नहीं', quickActions:'त्वरित कार्य', manageYourCrops:'अपनी फसलें जोड़ें, संपादित करें और ट्रैक करें', weatherForecast:'अपने खेत के लिए सटीक मौसम पूर्वानुमान प्राप्त करें', checkMarketPrices:'अपनी फसलों के लिए नवीनतम बाजार मूल्य देखें', useCurrentLocation:'वर्तमान स्थान का उपयोग करें', search:'खोजें', highLow:'उच्च/निम्न', precipitationChance:'वर्षा', chartPlaceholder:'मूल्य प्रवृत्ति चार्ट यहां प्रदर्शित होगा', viewPriceHistory:'मूल्य इतिहास देखें', priceTrend:'मूल्य प्रवृत्ति', backToLogin:'पहले से खाता है? लॉग इन', dontHaveAccount:'खाता नहीं है? पंजीकरण', poweredBy:'AI और कृषि तकनीक द्वारा संचालित', changePassword:'पासवर्ड बदलें' },
+      mr: { appName:'डिजिटल शेती मित्र', login:'लॉग इन', register:'चेरीणी', logout:'लॉग आउट', profile:'प्रोफाइल', dashboard:'डॅशबोर्ड', crops:'माझी पिके', weather:'हवामान', mandi:'मंडी भाव', welcome:'स्वागत आहे', fullName:'पूर्ण नाव', mobileNumber:'मोबाइल क्रमांक', email:'ईमेल', password:'पासवर्ड', confirmPassword:'पासवर्ड पुष्टी', address:'पत्ता', city:'शहर', state:'राज्य', pincode:'पिन कोड', farmSize:'शेताचा आकार', cropsGrown:'उगवलेली पिके', submit:'सबमिट', cancel:'रद्द करा', save:'जतना', edit:'संपादित', delete:'हटवा', add:'जोडा', search:'शोधा', loading:'लोड होत आहे...', cropManagement:'पीक व्यवस्थापन', addCrop:'नवीन पीक जोडा', cropName:'पिकाचे नाव', variety:'जात', area:'क्षेत्र (एक्‍र)', plantingDate:'बुवाई तारीख', expectedHarvest:'अपेक्षित कापणी', status:'स्थिती', planting:'बुवाई', growing:'वाढ', readyForHarvest:'कापण्यास तयार', harvested:'कापणी केली', mandiPrices:'मंडी भाव', currentWeather:'सध्याचे हवामान', temperature:'तापमान', humidity:'आर्द्रता', windSpeed:'वारा वेग', forecast:'अंदाज', selectCrop:'पीक निवडा', selectMarket:'बाजार निवडा', allCrops:'सर्व पिके', allMarkets:'सर्व बाजार', price:'भाव', unit:'एकक', change:'बदल', welcomeBack:'पुन्हा स्वागत आहे, {name}!', myCrops:'माझी पिके', noCrops:'तुम्ही अद्याप कोणतेही पीक जोडलेले नाही', addFirstCrop:'तुमचे पहिले पीक जोडा', noData:'डेटा उपलब्ध नाही', saveChanges:'बदल जतना', selectLanguage:'भाषा', english:'इंग्रजी', hindi:'हिंदी', marathi:'मराठी', currentPassword:'सध्याचा पासवर्ड', newPassword:'नवीन पासवर्ड', registrationSuccess:'नोंदणी यशस्वी!', loginSuccess:'लॉग इन यशस्वी!', passwordsDontMatch:'पासवर्ड जुळत नाहीत', fillAllFields:'कृपया सर्व आवश्यक फील्ड भरा', enterValidMobile:'कृपया वैध 10-अंकी मोबाइल क्रमांक टाका', profileUpdated:'प्रोफाइल यशस्वीरित्या अद्ययावत केले', passwordChanged:'पासवर्ड यशस्वीरित्या बदलला', cropAdded:'पीक यशस्वीरित्या जोडले', cropUpdated:'पीक यशस्वीरित्या अद्ययावत केले', cropDeleted:'पीक यशस्वीरित्या हटविले', confirmDelete:'हटविण्याची पुष्टी करा', deleteCropConfirm:'तुम्हाला खात्री आहे की हे पीक हटवायचे आहे?', deleting:'हटवत आहे...', updating:'अद्ययावत होत आहे...', adding:'जोडत आहे...', saving:'जतन होत आहे...', retry:'पुन्हा प्रयत्न करा', applyFilters:'फिल्टर लागू करा', totalCrops:'एकूण पिके', activeCrops:'सक्रिय पिके', recentActivity:'अलीकडील क्रियाकलाप', noRecentActivity:'अलीकडील क्रियाकलाप नाही', quickActions:'द्रुत क्रिया', manageYourCrops:'तुमची पिके जोडा, संपादित करा आणि ट्रॅक करा', weatherForecast:'तुमच्या शेतासाठी अचूक हवामान अंदाज मिळवा', checkMarketPrices:'तुमच्या पिकांसाठी नवीनतम बाजार भाव तपासा', useCurrentLocation:'सध्याचे स्थान वापरा', search:'शोधा', highLow:'उच्च/निम्न', precipitationChance:'पाऊस', chartPlaceholder:'किंमत ट्रेंड चार्ट येथे दर्शविला जाईल', viewPriceHistory:'किंमत इतिहास पहा', priceTrend:'किंमत ट्रेंड', backToLogin:'आधीच खाते आहे? लॉग इन', dontHaveAccount:'खाते नाही? नोंदणी', poweredBy:'AI आणि शेती तंत्रज्ञानाद्वारे समर्थित', changePassword:'पासवर्ड बदला' }
+    };
+
+    const useI18n = () => {
+      const [lang, setLang] = useState(localStorage.getItem('lang') || 'en');
+      const setLanguage = (l) => { setLang(l); localStorage.setItem('lang', l); };
+      const t = (key, params) => {
+        let str = translations[lang][key] || translations.en[key] || key;
+        if (params) Object.keys(params).forEach(k => str = str.replace(`{${k}}`, params[k]));
+        return str;
+      };
+      return { t, lang, setLanguage };
+    };
+
+    // ============ AUTH CONTEXT ============
+    const AuthContext = createContext();
+    const AuthProvider = ({ children }) => {
+      const [user, setUser] = useState(null);
+      const [loading, setLoading] = useState(true);
+      useEffect(() => {
+        try {
+          const stored = localStorage.getItem('user');
+          if (stored) setUser(JSON.parse(stored));
+        } catch(e) {}
+        setLoading(false);
+      }, []);
+      const login = (userData) => { setUser(userData); localStorage.setItem('user', JSON.stringify(userData)); };
+      const logout = () => { setUser(null); localStorage.removeItem('user'); localStorage.removeItem('token'); };
+      return <AuthContext.Provider value={{ user, login, logout, loading }}>{children}</AuthContext.Provider>;
+    };
+    const useAuth = () => useContext(AuthContext);
+
+    // ============ UI COMPONENTS ============
+    const Spinner = ({ size = 'large' }) => <div className={size === 'large' ? 'spinner' : 'spinner-small'}></div>;
+
+    const Card = ({ children, className = '', onClick }) => <div onClick={onClick} className={`bg-white rounded-xl shadow-sm border border-gray-100 ${className}`}>{children}</div>;
+
+    const Button = ({ onClick, children, variant = 'primary', disabled = false, type = 'button', className = '' }) => {
+      const styles = { primary: 'bg-green-600 text-white hover:bg-green-700', secondary: 'bg-white text-gray-700 border border-gray-300 hover:bg-gray-50', danger: 'bg-red-600 text-white hover:bg-red-700', ghost: 'text-gray-600 hover:bg-gray-100' };
+      return <button type={type} onClick={onClick} disabled={disabled} className={`px-4 py-2.5 rounded-lg font-medium transition-colors disabled:opacity-50 ${styles[variant]} ${className}`}>{children}</button>;
+    };
+
+    const Input = ({ label, error, ...props }) => (
+      <div className="mb-4">
+        {label && <label className="block text-sm font-medium text-gray-700 mb-1.5">{label}</label>}
+        <input {...props} className={`w-full px-4 py-2.5 rounded-lg border ${error ? 'border-red-500' : 'border-gray-300'} focus:outline-none focus:ring-2 focus:ring-green-500 focus:border-transparent ${props.className || ''}`} />
+        {error && <p className="mt-1 text-xs text-red-600">{error}</p>}
+      </div>
+    );
+
+    const Select = ({ label, children, ...props }) => (
+      <div className="mb-4">
+        {label && <label className="block text-sm font-medium text-gray-700 mb-1.5">{label}</label>}
+        <select {...props} className={`w-full px-4 py-2.5 rounded-lg border border-gray-300 focus:outline-none focus:ring-2 focus:ring-green-500 focus:border-transparent ${props.className || ''}`}>{children}</select>
+      </div>
+    );
+
+    // ============ HEADER ============
+    const Header = ({ onNavigate }) => {
+      const { t, lang, setLanguage } = useI18n();
+      const { user, logout } = useAuth();
+      const [showLang, setShowLang] = useState(false);
+      const [showUser, setShowUser] = useState(false);
+      const langRef = useRef(null);
+      const userRef = useRef(null);
+      useEffect(() => {
+        const handleClick = (e) => {
+          if (langRef.current && !langRef.current.contains(e.target)) setShowLang(false);
+          if (userRef.current && !userRef.current.contains(e.target)) setShowUser(false);
+        };
+        document.addEventListener('mousedown', handleClick);
+        return () => document.removeEventListener('mousedown', handleClick);
+      }, []);
+      return (
+        <header className="bg-white border-b border-gray-200 shadow-sm sticky top-0 z-40">
+          <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8">
+            <div className="flex justify-between items-center h-16">
+              <div onClick={() => user && onNavigate('dashboard')} className="flex items-center space-x-2 cursor-pointer">
+                <div className="h-9 w-9 bg-green-600 rounded-lg flex items-center justify-center text-white font-bold text-lg">कृ</div>
+                <span className="text-lg sm:text-xl font-semibold text-gray-800 hidden sm:inline">{t('appName')}</span>
+              </div>
+              {user && (
+                <nav className="hidden md:flex space-x-1">
+                  {['dashboard', 'crops', 'weather', 'mandi'].map(p => (
+                    <button key={p} onClick={() => onNavigate(p)} className="text-gray-600 hover:text-green-600 hover:bg-green-50 px-3 py-2 rounded-lg text-sm font-medium">{t(p)}</button>
+                  ))}
+                </nav>
+              )}
+              <div className="flex items-center space-x-2">
+                <div className="relative" ref={langRef}>
+                  <button onClick={() => setShowLang(!showLang)} className="flex items-center space-x-1 text-gray-600 hover:text-gray-900 hover:bg-gray-100 px-3 py-2 rounded-lg text-sm">
+                    <span>🌐</span><span className="font-medium">{lang === 'en' ? 'EN' : lang === 'hi' ? 'हि' : 'म'}</span>
+                  </button>
+                  {showLang && (
+                    <div className="absolute right-0 mt-1 w-36 bg-white rounded-lg shadow-lg py-1 z-50 border border-gray-100">
+                      <button onClick={() => { setLanguage('en'); setShowLang(false); }} className="block w-full text-left px-4 py-2 text-sm text-gray-700 hover:bg-gray-50">🇬🇧 English</button>
+                      <button onClick={() => { setLanguage('hi'); setShowLang(false); }} className="block w-full text-left px-4 py-2 text-sm text-gray-700 hover:bg-gray-50">🇮🇳 हिंदी</button>
+                      <button onClick={() => { setLanguage('mr'); setShowLang(false); }} className="block w-full text-left px-4 py-2 text-sm text-gray-700 hover:bg-gray-50">🇮🇳 मराठी</button>
+                    </div>
+                  )}
+                </div>
+                {user ? (
+                  <div className="relative" ref={userRef}>
+                    <button onClick={() => setShowUser(!showUser)} className="flex items-center space-x-1 text-gray-600 hover:text-gray-900 hover:bg-gray-100 px-3 py-2 rounded-lg text-sm">
+                      <span className="h-7 w-7 bg-green-100 text-green-700 rounded-full flex items-center justify-center font-semibold text-xs">{user.fullName?.charAt(0).toUpperCase()}</span>
+                      <span className="hidden sm:inline">{user.fullName?.split(' ')[0]}</span>
+                    </button>
+                    {showUser && (
+                      <div className="absolute right-0 mt-1 w-44 bg-white rounded-lg shadow-lg py-1 z-50 border border-gray-100">
+                        <button onClick={() => { onNavigate('profile'); setShowUser(false); }} className="block w-full text-left px-4 py-2 text-sm text-gray-700 hover:bg-gray-50">👤 {t('profile')}</button>
+                        <hr className="my-1"/>
+                        <button onClick={() => { logout(); setShowUser(false); }} className="block w-full text-left px-4 py-2 text-sm text-red-600 hover:bg-red-50">🚪 {t('logout')}</button>
+                      </div>
+                    )}
+                  </div>
+                ) : (
+                  <>
+                    <button onClick={() => onNavigate('login')} className="text-gray-600 hover:text-gray-900 px-3 py-2 text-sm font-medium">{t('login')}</button>
+                    <Button onClick={() => onNavigate('register')} className="text-sm">{t('register')}</Button>
+                  </>
+                )}
+              </div>
+            </div>
+          </div>
+          {/* Mobile nav */}
+          {user && (
+            <div className="md:hidden border-t border-gray-100">
+              <div className="max-w-7xl mx-auto px-2 py-2 flex space-x-1 overflow-x-auto">
+                {['dashboard', 'crops', 'weather', 'mandi'].map(p => (
+                  <button key={p} onClick={() => onNavigate(p)} className="text-gray-600 hover:text-green-600 hover:bg-green-50 px-3 py-1.5 rounded-lg text-xs font-medium whitespace-nowrap">{t(p)}</button>
+                ))}
+              </div>
+            </div>
+          )}
+        </header>
+      );
+    };
+
+    const Footer = () => {
+      const { t } = useI18n();
+      return (
+        <footer className="bg-white border-t border-gray-200 py-6 mt-8">
+          <div className="max-w-7xl mx-auto px-4 text-center">
+            <p className="text-sm text-gray-500">© {new Date().getFullYear()} {t('appName')}</p>
+            <p className="text-xs text-gray-400 mt-1">{t('poweredBy')}</p>
+          </div>
+        </footer>
+      );
+    };
+
+    // ============ PAGES ============
+    const LoginPage = ({ onNavigate }) => {
+      const { t } = useI18n();
+      const { login } = useAuth();
+      const [form, setForm] = useState({ mobileNumber: '', password: '' });
+      const [error, setError] = useState('');
+      const [loading, setLoading] = useState(false);
+      const handleSubmit = async (e) => {
+        e.preventDefault();
+        setError('');
+        if (!form.mobileNumber || !form.password) { setError(t('fillAllFields')); return; }
+        if (!/^\d{10}$/.test(form.mobileNumber)) { setError(t('enterValidMobile')); return; }
+        setLoading(true);
+        const res = await api.post('/auth/login', form);
+        setLoading(false);
+        if (res.success) { localStorage.setItem('token', res.data.token); login(res.data.user); onNavigate('dashboard'); }
+        else setError(res.message);
+      };
+      return (
+        <div className="min-h-[calc(100vh-140px)] flex items-center justify-center px-4 py-12">
+          <Card className="w-full max-w-md p-8">
+            <div className="text-center mb-6">
+              <div className="inline-block h-14 w-14 bg-green-100 rounded-full flex items-center justify-center text-3xl mb-3">🌾</div>
+              <h2 className="text-2xl font-bold text-gray-800">{t('login')}</h2>
+              <p className="text-sm text-gray-500 mt-1">{t('welcome')}</p>
+            </div>
+            <form onSubmit={handleSubmit}>
+              <Input label={t('mobileNumber')} type="tel" value={form.mobileNumber} onChange={e => setForm({...form, mobileNumber: e.target.value})} placeholder="9876543210" required />
+              <Input label={t('password')} type="password" value={form.password} onChange={e => setForm({...form, password: e.target.value})} required />
+              {error && <div className="bg-red-50 border border-red-200 text-red-800 px-3 py-2 rounded-lg text-sm mb-4">{error}</div>}
+              <Button type="submit" disabled={loading} className="w-full">{loading ? <><Spinner size="small" /> <span className="ml-2">{t('loading')}</span></> : t('login')}</Button>
+            </form>
+            <p className="text-center text-sm text-gray-600 mt-4">{t('dontHaveAccount')} <button type="button" onClick={() => onNavigate('register')} className="text-green-600 font-medium hover:underline">{t('register')}</button></p>
+          </Card>
+        </div>
+      );
+    };
+
+    const RegisterPage = ({ onNavigate }) => {
+      const { t } = useI18n();
+      const { login } = useAuth();
+      const [form, setForm] = useState({ fullName: '', mobileNumber: '', email: '', password: '', confirmPassword: '', address: '', city: '', state: '', pincode: '', farmSize: '', cropsGrown: '' });
+      const [error, setError] = useState('');
+      const [success, setSuccess] = useState(false);
+      const [loading, setLoading] = useState(false);
+      const handleSubmit = async (e) => {
+        e.preventDefault();
+        setError('');
+        if (!form.fullName || !form.mobileNumber || !form.password) { setError(t('fillAllFields')); return; }
+        if (!/^\d{10}$/.test(form.mobileNumber)) { setError(t('enterValidMobile')); return; }
+        if (form.password !== form.confirmPassword) { setError(t('passwordsDontMatch')); return; }
+        setLoading(true);
+        const res = await api.post('/auth/register', form);
+        setLoading(false);
+        if (res.success) { localStorage.setItem('token', res.data.token); login(res.data.user); setSuccess(true); setTimeout(() => onNavigate('dashboard'), 800); }
+        else setError(res.message);
+      };
+      return (
+        <div className="min-h-[calc(100vh-140px)] flex items-center justify-center px-4 py-12">
+          <Card className="w-full max-w-2xl p-8">
+            <div className="text-center mb-6">
+              <h2 className="text-2xl font-bold text-gray-800">{t('register')}</h2>
+              <p className="text-sm text-gray-500 mt-1">Create your account</p>
+            </div>
+            {success && <div className="bg-green-50 border border-green-200 text-green-800 px-3 py-2 rounded-lg text-sm mb-4">{t('registrationSuccess')}</div>}
+            <form onSubmit={handleSubmit} className="grid grid-cols-1 md:grid-cols-2 gap-x-4">
+              <div className="md:col-span-2"><Input label={t('fullName')} value={form.fullName} onChange={e => setForm({...form, fullName: e.target.value})} required /></div>
+              <Input label={t('mobileNumber')} type="tel" value={form.mobileNumber} onChange={e => setForm({...form, mobileNumber: e.target.value})} placeholder="9876543210" required />
+              <Input label={t('email')} type="email" value={form.email} onChange={e => setForm({...form, email: e.target.value})} />
+              <Input label={t('password')} type="password" value={form.password} onChange={e => setForm({...form, password: e.target.value})} required />
+              <Input label={t('confirmPassword')} type="password" value={form.confirmPassword} onChange={e => setForm({...form, confirmPassword: e.target.value})} required />
+              <div className="md:col-span-2"><Input label={t('address')} value={form.address} onChange={e => setForm({...form, address: e.target.value})} /></div>
+              <Input label={t('city')} value={form.city} onChange={e => setForm({...form, city: e.target.value})} />
+              <Input label={t('state')} value={form.state} onChange={e => setForm({...form, state: e.target.value})} />
+              <Input label={t('pincode')} value={form.pincode} onChange={e => setForm({...form, pincode: e.target.value})} />
+              <Input label={t('farmSize')} type="number" step="0.1" value={form.farmSize} onChange={e => setForm({...form, farmSize: e.target.value})} />
+              <div className="md:col-span-2"><Input label={t('cropsGrown')} value={form.cropsGrown} onChange={e => setForm({...form, cropsGrown: e.target.value})} placeholder="e.g., Rice, Wheat, Cotton" /></div>
+              {error && <div className="md:col-span-2 bg-red-50 border border-red-200 text-red-800 px-3 py-2 rounded-lg text-sm">{error}</div>}
+              <div className="md:col-span-2"><Button type="submit" disabled={loading} className="w-full">{loading ? <><Spinner size="small" /> <span className="ml-2">{t('loading')}</span></> : t('register')}</Button></div>
+            </form>
+            <p className="text-center text-sm text-gray-600 mt-4">{t('backToLogin')} <button type="button" onClick={() => onNavigate('login')} className="text-green-600 font-medium hover:underline">{t('login')}</button></p>
+          </Card>
+        </div>
+      );
+    };
+
+    const DashboardPage = ({ onNavigate }) => {
+      const { t } = useI18n();
+      const { user } = useAuth();
+      const [stats, setStats] = useState({ totalCrops: 0, activeCrops: 0 });
+      const [crops, setCrops] = useState([]);
+      const [loading, setLoading] = useState(true);
+      useEffect(() => {
+        Promise.all([api.get('/analytics/dashboard'), api.get('/crops')]).then(([s, c]) => {
+          if (s.success) setStats(s.data);
+          if (c.success) setCrops(c.data);
+          setLoading(false);
+        }).catch(() => setLoading(false));
+      }, []);
+      if (loading) return <div className="flex h-64 items-center justify-center"><Spinner /></div>;
+      return (
+        <div className="max-w-7xl mx-auto px-4 py-8 space-y-6">
+          <div className="text-center">
+            <h1 className="text-2xl sm:text-3xl font-bold text-gray-800">{t('welcomeBack', { name: user?.fullName })}</h1>
+            <p className="text-sm text-gray-500 mt-1">Smart Farming Assistant</p>
+          </div>
+          <div className="grid grid-cols-2 lg:grid-cols-4 gap-4">
+            <Card className="p-5"><div className="flex items-center justify-between"><div><p className="text-xs text-gray-500 uppercase">{t('totalCrops')}</p><p className="text-2xl sm:text-3xl font-bold text-gray-900 mt-1">{stats.totalCrops || 0}</p></div><div className="h-10 w-10 bg-green-100 text-green-600 rounded-lg flex items-center justify-center text-xl">🌾</div></div></Card>
+            <Card className="p-5"><div className="flex items-center justify-between"><div><p className="text-xs text-gray-500 uppercase">{t('activeCrops')}</p><p className="text-2xl sm:text-3xl font-bold text-green-600 mt-1">{stats.activeCrops || 0}</p></div><div className="h-10 w-10 bg-emerald-100 text-emerald-600 rounded-lg flex items-center justify-center text-xl">🌱</div></div></Card>
+            <Card className="p-5"><div className="flex items-center justify-between"><div><p className="text-xs text-gray-500 uppercase">{t('weather')}</p><p className="text-2xl sm:text-3xl font-bold text-blue-600 mt-1">28°C</p></div><div className="h-10 w-10 bg-blue-100 text-blue-600 rounded-lg flex items-center justify-center text-xl">☀️</div></div></Card>
+            <Card className="p-5"><div className="flex items-center justify-between"><div><p className="text-xs text-gray-500 uppercase">{t('mandiPrices')}</p><p className="text-2xl sm:text-3xl font-bold text-yellow-600 mt-1">₹2200</p></div><div className="h-10 w-10 bg-yellow-100 text-yellow-600 rounded-lg flex items-center justify-center text-xl">💰</div></div></Card>
+          </div>
+          <Card>
+            <div className="p-5 border-b border-gray-100 flex justify-between items-center"><h2 className="font-semibold text-gray-800">{t('recentActivity')}</h2><button onClick={() => onNavigate('crops')} className="text-sm text-green-600 hover:underline">{t('viewPriceHistory').replace('View Price History', 'View All')}</button></div>
+            <div className="p-5">
+              {crops.length === 0 ? <div className="text-center py-6 text-gray-500"><p>{t('noRecentActivity')}</p><Button onClick={() => onNavigate('crops')} className="mt-3">{t('addFirstCrop')}</Button></div> : (
+                <div className="space-y-2">
+                  {crops.slice(0, 3).map(c => (
+                    <div key={c._id} className="flex justify-between items-center p-3 bg-gray-50 rounded-lg hover:bg-gray-100">
+                      <div className="flex items-center gap-3">
+                        <div className="h-10 w-10 bg-green-100 text-green-600 rounded-full flex items-center justify-center">🌾</div>
+                        <div><p className="font-medium text-gray-900">{c.name}</p><p className="text-xs text-gray-500">{c.variety || 'No variety'}</p></div>
+                      </div>
+                      <span className="px-2 py-1 bg-green-100 text-green-800 text-xs rounded-full font-medium">{c.status}</span>
+                    </div>
+                  ))}
+                </div>
+              )}
+            </div>
+          </Card>
+          <div>
+            <h2 className="font-semibold text-gray-800 mb-3">{t('quickActions')}</h2>
+            <div className="grid grid-cols-1 sm:grid-cols-3 gap-4">
+              <Card className="p-5 cursor-pointer hover:shadow-md transition-shadow" onClick={() => onNavigate('crops')}>
+                <div className="h-12 w-12 bg-green-100 text-green-600 rounded-lg flex items-center justify-center text-2xl mb-3">🌾</div>
+                <h3 className="font-semibold mb-1">{t('cropManagement')}</h3>
+                <p className="text-sm text-gray-500">{t('manageYourCrops')}</p>
+              </Card>
+              <Card className="p-5 cursor-pointer hover:shadow-md transition-shadow" onClick={() => onNavigate('weather')}>
+                <div className="h-12 w-12 bg-blue-100 text-blue-600 rounded-lg flex items-center justify-center text-2xl mb-3">☀️</div>
+                <h3 className="font-semibold mb-1">{t('weather')}</h3>
+                <p className="text-sm text-gray-500">{t('weatherForecast')}</p>
+              </Card>
+              <Card className="p-5 cursor-pointer hover:shadow-md transition-shadow" onClick={() => onNavigate('mandi')}>
+                <div className="h-12 w-12 bg-yellow-100 text-yellow-600 rounded-lg flex items-center justify-center text-2xl mb-3">💰</div>
+                <h3 className="font-semibold mb-1">{t('mandiPrices')}</h3>
+                <p className="text-sm text-gray-500">{t('checkMarketPrices')}</p>
+              </Card>
+            </div>
+          </div>
+        </div>
+      );
+    };
+
+    const ProfilePage = () => {
+      const { t } = useI18n();
+      const { user, login } = useAuth();
+      const [form, setForm] = useState(user || {});
+      const [pwdForm, setPwdForm] = useState({ currentPassword: '', newPassword: '', confirmPassword: '' });
+      const [success, setSuccess] = useState('');
+      const [error, setError] = useState('');
+      const [loading, setLoading] = useState(false);
+      useEffect(() => { api.get('/farmer/profile').then(res => { if (res.success) setForm(res.data); }); }, []);
+      const handleSubmit = async (e) => {
+        e.preventDefault(); setError(''); setSuccess(''); setLoading(true);
+        const res = await api.put('/farmer/profile', form);
+        setLoading(false);
+        if (res.success) { setSuccess(t('profileUpdated')); login(res.data); }
+        else setError(res.message);
+      };
+      const handlePwd = async (e) => {
+        e.preventDefault(); setError(''); setSuccess('');
+        if (pwdForm.newPassword !== pwdForm.confirmPassword) { setError(t('passwordsDontMatch')); return; }
+        setLoading(true);
+        const res = await api.put('/farmer/change-password', pwdForm);
+        setLoading(false);
+        if (res.success) { setSuccess(t('passwordChanged')); setPwdForm({ currentPassword: '', newPassword: '', confirmPassword: '' }); }
+        else setError(res.message);
+      };
+      return (
+        <div className="max-w-7xl mx-auto px-4 py-8 space-y-6">
+          <h1 className="text-2xl font-bold text-center">{t('profile')}</h1>
+          {success && <div className="bg-green-50 border border-green-200 text-green-800 px-4 py-3 rounded-lg text-sm">{success}</div>}
+          {error && <div className="bg-red-50 border border-red-200 text-red-800 px-4 py-3 rounded-lg text-sm">{error}</div>}
+          <Card>
+            <div className="p-5 border-b border-gray-100"><h2 className="font-semibold">{t('profile')}</h2></div>
+            <form onSubmit={handleSubmit} className="p-5 grid grid-cols-1 md:grid-cols-2 gap-x-4">
+              <div className="md:col-span-2"><Input label={t('fullName')} value={form.fullName || ''} onChange={e => setForm({...form, fullName: e.target.value})} required /></div>
+              <Input label={t('mobileNumber')} value={form.mobileNumber || ''} onChange={e => setForm({...form, mobileNumber: e.target.value})} required />
+              <Input label={t('email')} type="email" value={form.email || ''} onChange={e => setForm({...form, email: e.target.value})} />
+              <div className="md:col-span-2"><Input label={t('address')} value={form.address || ''} onChange={e => setForm({...form, address: e.target.value})} /></div>
+              <Input label={t('city')} value={form.city || ''} onChange={e => setForm({...form, city: e.target.value})} />
+              <Input label={t('state')} value={form.state || ''} onChange={e => setForm({...form, state: e.target.value})} />
+              <Input label={t('pincode')} value={form.pincode || ''} onChange={e => setForm({...form, pincode: e.target.value})} />
+              <Input label={t('farmSize')} type="number" step="0.1" value={form.farmSize || ''} onChange={e => setForm({...form, farmSize: e.target.value})} />
+              <div className="md:col-span-2"><Input label={t('cropsGrown')} value={form.cropsGrown || ''} onChange={e => setForm({...form, cropsGrown: e.target.value})} /></div>
+              <div className="md:col-span-2"><Button type="submit" disabled={loading} className="w-full">{loading ? <><Spinner size="small" /> <span className="ml-2">{t('saving')}</span></> : t('saveChanges')}</Button></div>
+            </form>
+          </Card>
+          <Card>
+            <div className="p-5 border-b border-gray-100"><h2 className="font-semibold">{t('changePassword')}</h2></div>
+            <form onSubmit={handlePwd} className="p-5 grid grid-cols-1 md:grid-cols-3 gap-x-4">
+              <Input label={t('currentPassword')} type="password" value={pwdForm.currentPassword} onChange={e => setPwdForm({...pwdForm, currentPassword: e.target.value})} required />
+              <Input label={t('newPassword')} type="password" value={pwdForm.newPassword} onChange={e => setPwdForm({...pwdForm, newPassword: e.target.value})} required />
+              <Input label={t('confirmPassword')} type="password" value={pwdForm.confirmPassword} onChange={e => setPwdForm({...pwdForm, confirmPassword: e.target.value})} required />
+              <div className="md:col-span-3"><Button type="submit" disabled={loading} className="w-full">{loading ? <><Spinner size="small" /> <span className="ml-2">{t('saving')}</span></> : t('changePassword')}</Button></div>
+            </form>
+          </Card>
+        </div>
+      );
+    };
+
+    const CropManagementPage = () => {
+      const { t } = useI18n();
+      const [crops, setCrops] = useState([]);
+      const [loading, setLoading] = useState(true);
+      const [showForm, setShowForm] = useState(false);
+      const [editing, setEditing] = useState(null);
+      const [form, setForm] = useState({ name: '', variety: '', area: '', plantingDate: '', expectedHarvest: '', status: 'planting' });
+      const [deleteId, setDeleteId] = useState(null);
+      const [submitting, setSubmitting] = useState(false);
+      const [error, setError] = useState('');
+      const fetchCrops = async () => { setLoading(true); const res = await api.get('/crops'); if (res.success) setCrops(res.data); setLoading(false); };
+      useEffect(() => { fetchCrops(); }, []);
+      const handleSubmit = async (e) => {
+        e.preventDefault(); setError(''); setSubmitting(true);
+        const res = editing ? await api.put('/crops/' + editing._id, form) : await api.post('/crops', form);
+        setSubmitting(false);
+        if (res.success) { setShowForm(false); setEditing(null); setForm({ name: '', variety: '', area: '', plantingDate: '', expectedHarvest: '', status: 'planting' }); fetchCrops(); }
+        else setError(res.message);
+      };
+      const handleDelete = async () => { const res = await api.del('/crops/' + deleteId); if (res.success) { setDeleteId(null); fetchCrops(); } };
+      if (loading) return <div className="flex h-64 items-center justify-center"><Spinner /></div>;
+      return (
+        <div className="max-w-7xl mx-auto px-4 py-8 space-y-6">
+          <div className="flex flex-col sm:flex-row justify-between items-start sm:items-center gap-3">
+            <h1 className="text-2xl font-bold">{t('cropManagement')}</h1>
+            <Button onClick={() => { setShowForm(true); setEditing(null); setForm({ name: '', variety: '', area: '', plantingDate: '', expectedHarvest: '', status: 'planting' }); setError(''); }}>➕ {t('addCrop')}</Button>
+          </div>
+          {showForm && (
+            <Card>
+              <form onSubmit={handleSubmit} className="p-5 grid grid-cols-1 md:grid-cols-2 gap-x-4">
+                <Input label={t('cropName')} value={form.name} onChange={e => setForm({...form, name: e.target.value})} required />
+                <Input label={t('variety')} value={form.variety} onChange={e => setForm({...form, variety: e.target.value})} />
+                <Input label={t('area')} type="number" step="0.1" value={form.area} onChange={e => setForm({...form, area: e.target.value})} />
+                <Select label={t('status')} value={form.status} onChange={e => setForm({...form, status: e.target.value})}>
+                  <option value="planting">{t('planting')}</option>
+                  <option value="growing">{t('growing')}</option>
+                  <option value="readyForHarvest">{t('readyForHarvest')}</option>
+                  <option value="harvested">{t('harvested')}</option>
+                </Select>
+                <Input label={t('plantingDate')} type="date" value={form.plantingDate?.split('T')[0] || ''} onChange={e => setForm({...form, plantingDate: e.target.value})} />
+                <Input label={t('expectedHarvest')} type="date" value={form.expectedHarvest?.split('T')[0] || ''} onChange={e => setForm({...form, expectedHarvest: e.target.value})} />
+                {error && <div className="md:col-span-2 bg-red-50 border border-red-200 text-red-800 px-3 py-2 rounded text-sm">{error}</div>}
+                <div className="md:col-span-2 flex gap-2">
+                  <Button type="submit" disabled={submitting} className="flex-1">{submitting ? <><Spinner size="small" /></> : (editing ? t('saveChanges') : t('add'))}</Button>
+                  <Button type="button" variant="secondary" onClick={() => { setShowForm(false); setEditing(null); }} className="flex-1">{t('cancel')}</Button>
+                </div>
+              </form>
+            </Card>
+          )}
+          {crops.length === 0 ? <Card><div className="p-12 text-center text-gray-500"><div className="text-5xl mb-3">🌾</div><p>{t('noCrops')}</p><Button onClick={() => setShowForm(true)} className="mt-4">{t('addFirstCrop')}</Button></div></Card> : (
+            <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-4">
+              {crops.map(c => (
+                <Card key={c._id} className="p-5">
+                  <div className="flex justify-between items-start mb-2">
+                    <h3 className="font-semibold text-gray-900">{c.name}</h3>
+                    <span className="px-2 py-0.5 bg-green-100 text-green-800 text-xs rounded-full font-medium">{c.status}</span>
+                  </div>
+                  <p className="text-sm text-gray-600 mb-1">🌱 {c.variety || 'No variety specified'}</p>
+                  <p className="text-sm text-gray-600 mb-1">📏 {c.area || 0} acres</p>
+                  <p className="text-xs text-gray-500">🌿 Planted: {c.plantingDate ? new Date(c.plantingDate).toLocaleDateString() : 'Not set'}</p>
+                  <div className="flex gap-2 mt-4">
+                    <Button variant="secondary" onClick={() => { setEditing(c); setForm({...c, plantingDate: c.plantingDate?.split('T')[0] || '', expectedHarvest: c.expectedHarvest?.split('T')[0] || ''}); setShowForm(true); setError(''); }} className="flex-1 text-sm">✏️ {t('edit')}</Button>
+                    <Button variant="danger" onClick={() => setDeleteId(c._id)} className="flex-1 text-sm">🗑️ {t('delete')}</Button>
+                  </div>
+                </Card>
+              ))}
+            </div>
+          )}
+          {deleteId && (
+            <div className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center z-50 p-4">
+              <Card className="p-6 max-w-sm w-full">
+                <h3 className="font-bold text-lg mb-2">⚠️ {t('confirmDelete')}</h3>
+                <p className="text-gray-600 mb-4 text-sm">{t('deleteCropConfirm')}</p>
+                <div className="flex gap-2">
+                  <Button variant="secondary" onClick={() => setDeleteId(null)} className="flex-1">{t('cancel')}</Button>
+                  <Button variant="danger" onClick={handleDelete} className="flex-1">{t('delete')}</Button>
+                </div>
+              </Card>
+            </div>
+          )}
+        </div>
+      );
+    };
+
+    const WeatherPage = () => {
+      const { t } = useI18n();
+      const [weather, setWeather] = useState(null);
+      const [forecast, setForecast] = useState([]);
+      const [loading, setLoading] = useState(true);
+      useEffect(() => {
+        Promise.all([api.get('/weather/current?location=Pune'), api.get('/weather/forecast?days=7')]).then(([c, f]) => {
+          if (c.success) setWeather(c.data);
+          if (f.success) setForecast(f.data);
+          setLoading(false);
+        }).catch(() => setLoading(false));
+      }, []);
+      if (loading) return <div className="flex h-64 items-center justify-center"><Spinner /></div>;
+      const getIcon = (c) => c?.includes('Rain') ? '🌧️' : c?.includes('Cloud') ? '☁️' : c?.includes('Thunder') ? '⛈️' : '☀️';
+      return (
+        <div className="max-w-7xl mx-auto px-4 py-8 space-y-6">
+          <h1 className="text-2xl font-bold text-center">{t('weather')}</h1>
+          {weather && (
+            <Card className="overflow-hidden">
+              <div className="bg-gradient-to-br from-blue-400 to-blue-600 p-8 text-white text-center">
+                <div className="text-7xl mb-3">{getIcon(weather.condition)}</div>
+                <h2 className="text-2xl font-bold mb-1">{weather.temperature}°C</h2>
+                <p className="text-blue-100">{weather.condition}</p>
+                <p className="text-sm text-blue-200 mt-1">📍 {weather.location}</p>
+              </div>
+              <div className="grid grid-cols-3 divide-x divide-gray-100">
+                <div className="p-4 text-center"><p className="text-2xl font-bold text-gray-900">{weather.humidity}%</p><p className="text-xs text-gray-500 mt-1">{t('humidity')}</p></div>
+                <div className="p-4 text-center"><p className="text-2xl font-bold text-gray-900">{weather.windSpeed}</p><p className="text-xs text-gray-500 mt-1">{t('windSpeed')} (km/h)</p></div>
+                <div className="p-4 text-center"><p className="text-2xl font-bold text-gray-900">{weather.precipitation}</p><p className="text-xs text-gray-500 mt-1">{t('precipitation')} (mm)</p></div>
+              </div>
+            </Card>
+          )}
+          {forecast.length > 0 && (
+            <Card>
+              <div className="p-5 border-b border-gray-100"><h2 className="font-semibold">📅 {t('forecast')}</h2></div>
+              <div className="divide-y divide-gray-100">
+                {forecast.map((day, i) => (
+                  <div key={i} className="p-4 flex justify-between items-center hover:bg-gray-50">
+                    <div className="flex items-center gap-3">
+                      <div className="text-3xl">{getIcon(day.condition)}</div>
+                      <div><p className="font-medium text-gray-900">{i === 0 ? t('forecast') + ' - ' + (i+1) : new Date(day.date).toLocaleDateString(undefined, { weekday: 'long' })}</p><p className="text-sm text-gray-500">{day.condition}</p></div>
+                    </div>
+                    <div className="text-right"><p className="font-bold text-gray-900">{day.maxTemp}° / {day.minTemp}°</p><p className="text-xs text-blue-600">💧 {day.precipitationChance}%</p></div>
+                  </div>
+                ))}
+              </div>
+            </Card>
+          )}
+        </div>
+      );
+    };
+
+    const MandiPricePage = () => {
+      const { t } = useI18n();
+      const [prices, setPrices] = useState([]);
+      const [loading, setLoading] = useState(true);
+      const [filters, setFilters] = useState({ crop: '', market: '' });
+      useEffect(() => {
+        const params = new URLSearchParams(Object.entries(filters).filter(([_,v]) => v)).toString();
+        api.get('/mandi/prices' + (params ? '?' + params : '')).then(res => { if (res.success) setPrices(res.data); setLoading(false); }).catch(() => setLoading(false));
+      }, [filters]);
+      if (loading) return <div className="flex h-64 items-center justify-center"><Spinner /></div>;
+      return (
+        <div className="max-w-7xl mx-auto px-4 py-8 space-y-6">
+          <h1 className="text-2xl font-bold text-center">💰 {t('mandiPrices')}</h1>
+          <Card className="p-5">
+            <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
+              <Select label={t('selectCrop')} value={filters.crop} onChange={e => setFilters({...filters, crop: e.target.value})}>
+                <option value="">{t('allCrops')}</option>
+                {['Rice', 'Wheat', 'Cotton', 'Sugarcane', 'Onion', 'Tomato', 'Potato', 'Soybean'].map(c => <option key={c} value={c}>{c}</option>)}
+              </Select>
+              <Select label={t('selectMarket')} value={filters.market} onChange={e => setFilters({...filters, market: e.target.value})}>
+                <option value="">{t('allMarkets')}</option>
+                {['Mumbai', 'Delhi', 'Pune', 'Nashik', 'Bangalore', 'Chennai', 'Kolkata'].map(m => <option key={m} value={m}>{m}</option>)}
+              </Select>
+              <div className="flex items-end"><Button onClick={() => setFilters({...filters})} className="w-full">{t('applyFilters')}</Button></div>
+            </div>
+          </Card>
+          {prices.length === 0 ? <Card><div className="p-12 text-center text-gray-500"><div className="text-5xl mb-3">💰</div><p>{t('noData')}</p></div></Card> : (
+            <Card>
+              <div className="overflow-x-auto">
+                <table className="w-full">
+                  <thead className="bg-gray-50 border-b border-gray-100">
+                    <tr>
+                      <th className="px-4 py-3 text-left text-xs font-medium text-gray-500 uppercase">{t('selectCrop')}</th>
+                      <th className="px-4 py-3 text-left text-xs font-medium text-gray-500 uppercase">{t('selectMarket')}</th>
+                      <th className="px-4 py-3 text-left text-xs font-medium text-gray-500 uppercase">{t('price')}</th>
+                      <th className="px-4 py-3 text-left text-xs font-medium text-gray-500 uppercase">{t('change')}</th>
+                    </tr>
+                  </thead>
+                  <tbody className="divide-y divide-gray-100">
+                    {prices.slice(0, 30).map(p => (
+                      <tr key={p.id} className="hover:bg-gray-50">
+                        <td className="px-4 py-3 font-medium text-gray-900">{p.cropName}</td>
+                        <td className="px-4 py-3 text-gray-600">{p.marketName}</td>
+                        <td className="px-4 py-3 font-bold text-gray-900">₹{p.price}<span className="text-xs text-gray-500 font-normal">/{p.unit}</span></td>
+                        <td className="px-4 py-3"><span className={`font-medium ${p.change >= 0 ? 'text-green-600' : 'text-red-600'}`}>{p.change >= 0 ? '▲ +' : '▼ '}{Math.abs(p.change).toFixed(2)} <span className="text-xs">({Math.abs(p.changePercent).toFixed(1)}%)</span></span></td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+              </div>
+            </Card>
+          )}
+        </div>
+      );
+    };
+
+    // ============ MAIN APP ============
+    const App = () => {
+      const [page, setPage] = useState('login');
+      const { user, loading } = useAuth();
+      if (loading) return <div className="flex h-screen items-center justify-center"><Spinner /></div>;
+      const navigate = (p) => {
+        if (!user && !['login', 'register'].includes(p)) { setPage('login'); return; }
+        if (user && ['login', 'register'].includes(p)) { setPage('dashboard'); return; }
+        setPage(p);
+        window.scrollTo(0, 0);
+      };
+      const renderPage = () => {
+        if (!user) return page === 'register' ? <RegisterPage onNavigate={navigate} /> : <LoginPage onNavigate={navigate} />;
+        switch(page) {
+          case 'profile': return <ProfilePage />;
+          case 'crops': return <CropManagementPage />;
+          case 'weather': return <WeatherPage />;
+          case 'mandi': return <MandiPricePage />;
+          case 'dashboard':
+          default: return <DashboardPage onNavigate={navigate} />;
+        }
+      };
+      return (
+        <div className="min-h-screen flex flex-col bg-gray-50">
+          <Header onNavigate={navigate} />
+          <main className="flex-1">{renderPage()}</main>
+          <Footer />
+        </div>
+      );
+    };
+
+    const root = ReactDOM.createRoot(document.getElementById('root'));
+    root.render(<AuthProvider><App /></AuthProvider>);
+  </script>
+</body>
+</html>
